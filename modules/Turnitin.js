@@ -182,7 +182,6 @@ class Turnitin {
         newSession.append('accept','application/json');
         newSession.append('origin', 'https://www.turnitin.com');
         newSession.append('host', 'www.turnitin.com');
-        // newSession.append('X-Requested-With','XMLHttpRequest');
         newSession.append('content-type',data.getHeaders());
         newSession.append('accept-encoding','gzip, deflate');
         let next = '';

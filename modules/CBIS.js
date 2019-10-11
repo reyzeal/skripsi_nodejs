@@ -5,6 +5,7 @@ const path = require('path');
 const exec = require('child_process').exec;
 const Xray = require('x-ray');
 let X = Xray();
+
 class CBIS{
     constructor(nim,pin, temp = '', endpoint='http://fti.upnyk.ac.id'){
         this.data = {
