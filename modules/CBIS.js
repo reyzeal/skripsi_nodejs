@@ -270,8 +270,4 @@ class CBIS{
         return result;
     }
 }
-let CB = new CBIS(123150142,9651, path.join(__dirname, '../test/CBIS'));
-let x = async function f() {
-    await CB.biodata();
-};
-x();
+module.exports.CBIS = CBIS;
