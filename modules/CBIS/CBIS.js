@@ -2,7 +2,7 @@ const request = require('request-promise');
 const randomstring = require('randomstring');
 const fs = require('fs');
 const path = require('path');
-const exec = require('child_process').exec;
+const exec = require('child_process').execSync;
 const Xray = require('x-ray');
 let X = Xray();
 
@@ -20,6 +20,7 @@ class CBIS{
             },
             jar : []
         };
+        this.ready = false;
         this.temp = path.join(temp,''+nim);
         let cred_path = path.join(this.temp,`${nim}.json`);
         if (!fs.existsSync(this.temp)){
@@ -32,7 +33,15 @@ class CBIS{
             this.data.captcha = creds.captcha;
             this.data.jar = creds.jar;
         }else{
-            fs.writeFileSync(cred_path,JSON.stringify({}),'utf8');
+            const {session, phpsessid, captcha, jar} = this.data;
+            let cred_path = path.join(this.temp,`${this.data.nim}.json`);
+            let credential = {
+                session : session,
+                phpsessid: phpsessid,
+                captcha : captcha,
+                jar : jar
+            };
+            fs.writeFileSync(cred_path,JSON.stringify(credential),'utf8');
         }
         this.endpoint = endpoint;
     }
@@ -47,7 +56,10 @@ class CBIS{
     }
     async check(){
         let hasil =false;
-        request({
+        
+        if(this.data.session === undefined) return false;
+        
+        await request({
             jar : this.buildCookie(),
             url:this.url(`session/${this.data.session}/menusdm.html`),
         }).then(r => {
@@ -67,11 +79,11 @@ class CBIS{
         fs.writeFileSync(cred_path,JSON.stringify(credential),'utf8');
     }
     async getCaptcha(){
-        let c_path = this.data.captcha.file?this.data.captcha.file:path.join(this.temp,randomstring.generate()+'.png');
+        let c_path = this.data.captcha && this.data.captcha.file?this.data.captcha.file:path.join(this.temp,randomstring.generate()+'.png');
         let resource = fs.createWriteStream(c_path);
         let that = this;
         // this.data.jar = request.jar();
-        await request({
+        let x = await request({
             url : `${this.url('c.php')}`,
             method:'GET',
             encoding: null,
@@ -80,25 +92,25 @@ class CBIS{
             },
             jar: this.data.jar,
             transform:(body, response, resolveWithFullResponse)=>{
-                that.data.jar.push(response.toJSON().headers['set-cookie'][0]);
-                that.data.phpsessid = response.toJSON().headers['set-cookie'][0].match(/PHPSESSID=([^;]+)/)[1];
+                if(response.toJSON().headers['set-cookie']){
+                    that.data.jar.push(response.toJSON().headers['set-cookie'][0]);
+                    that.data.phpsessid = response.toJSON().headers['set-cookie'][0].match(/PHPSESSID=([^;]+)/)[1];
+                }
                 return body;
             }
         }).then(r => {
             resource.write(r,'binary');
             resource.end();
-            const command = `tesseract "${c_path}" stdout --oem 0 --psm 13 -c tessedit_char_whitelist=+0123546789`;
 
-            exec(command, function (error, stdout, stderr) {
-                that.data.captcha = {
-                    file : c_path,
-                    ocr : stdout,
-                    eval : eval(stdout)
-                };
-                that.updateCreds();
-            });
         });
-
+        const command = `tesseract "${c_path}" stdout --oem 0 --psm 13 -c tessedit_char_whitelist=+0123546789`;
+        let stdout = exec(command).toString().split('\r\n')[0];
+        that.data.captcha = {
+            file : c_path,
+            ocr : stdout,
+            eval : eval(stdout)
+        };
+        await that.updateCreds();
     }
     buildCookie(){
         let jar = request.jar();
@@ -109,47 +121,57 @@ class CBIS{
     }
     async login(){
         let check_ = await this.check();
-        if( !(this.data.session && check_)){
+
+        if (!(this.data.session && check_)) {
             await this.getCaptcha();
             let that = this;
-            setTimeout(async function () {
 
-                await request({
-                    url : that.url('login.html'),
-                    method:'POST',
-                    formData:{
-                        user_id : that.data.nim,
-                        pwd0  : that.data.pin,
-                        fcaptcha: that.data.captcha.eval,
-                        submit1 : "login"
-                    },
-                    jar : that.buildCookie(),
-                    transform:(body, response, resolveWithFullResponse)=>{
-                        for(let i in response.toJSON().headers['set-cookie'])
-                            that.data.jar.push(response.toJSON().headers['set-cookie'][i]);
-                        return body;
+            await request({
+                url: that.url('login.html'),
+                method: 'POST',
+                formData: {
+                    user_id: that.data.nim,
+                    pwd0: that.data.pin,
+                    fcaptcha: that.data.captcha.eval,
+                    submit1: "login"
+                },
+                jar: that.buildCookie(),
+                transform: (body, response, resolveWithFullResponse) => {
+                    for (let i in response.toJSON().headers['set-cookie']) {
+
+                        that.data.jar.push(response.toJSON().headers['set-cookie'][i]);
+
                     }
-                }).then(r=>{
-                    let result = r.match(/session\/([^\/]+)/);
-                    if(result === null){
-                        that.data.session = undefined;
-                        that.updateCreds();
-                    }else{
-                        that.data.session = result[1];
-                        that.updateCreds();
-                        that.check();
-                    }
-                });
-            }, 3000);
+
+                    return body;
+                }
+            }).then(r => {
+                let result = r.match(/session\/([^\/]+)/);
+                if (result === null) {
+                    that.data.session = undefined;
+                    that.updateCreds();
+                } else {
+                    that.data.session = result[1];
+                    that.updateCreds();
+                    that.check();
+                    that.ready = true;
+                }
+            }).error(e=>{
+                console.log(e);
+                throw Error(e);
+            });
         }
+        if(this.data.session === undefined)
+            throw Error('PIN bermasalah');
     }
     async transkrip(){
+        await this.login();
         let html = '';
         await request({
             url: await this.session('transkrip.html'),
             jar:this.buildCookie(),
-        }).then(r=>html=r);
-        let result = [];
+        }).then(r=>html=r).error(e=>console.log(e));
+        let result = {};
         await X(html,'tr',[{
             no : 'td:nth-child(1)',
             kur : 'td:nth-child(2)',
@@ -160,7 +182,7 @@ class CBIS{
             ke : 'td:nth-child(7)',
             sesi : 'td:nth-child(8)',
             nilai : 'td:nth-child(9)',
-        }])(function (err, res) {
+        }]).then(res=>{
             res.shift();
             let cut = 0;
             for(let i in res){
@@ -170,11 +192,23 @@ class CBIS{
                     break;
                 }
             }
-            result = res;
-        });
+            result['data'] = res;
+        }).error(e=>console.log(e));
+        await X(html,{
+            ipk: '#bigyellow',
+            sks: '[bgcolor=#0011aa]'
+        }).then(res=>{
+            result['ipk'] = res.ipk;
+            let total = 0;
+            for(let i in result){
+                total+=result[i].sks
+            }
+            result['sks'] = res.sks.match(/÷ (\d+)/)[1];
+        }).error(e=>console.log(e));
         return result;
     }
     async biodata(){
+        await this.login();
         let html = '';
         await request({
             url: await this.session('editbiodatamhs.html'),
@@ -218,9 +252,14 @@ class CBIS{
 
             }
         });
-        return result;
+        let Array = {};
+        for(let i in result){
+            Array[result[i].key.replace(':','')] = result[i].value;
+        }
+        return Array;
     }
     async KRP(old = false){
+        await this.login();
         let html = '';
         await request({
             url: await this.session('nilai.html'),
@@ -267,8 +306,8 @@ class CBIS{
                 result.data = r;
             });
         }
-        console.log(result);
+        
         return result;
     }
 }
-module.exports.CBIS = CBIS;
+module.exports = CBIS;

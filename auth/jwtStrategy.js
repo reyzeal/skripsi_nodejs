@@ -5,7 +5,7 @@ const mahasiswa = require('../models/mahasiswa');
 const dosen = require('../models/dosen');
 const tatausaha = require('../models/tatausaha');
 
-opts.jwtFromRequest = ExtractJwt.fromAuthHeaderWithScheme('jwt');
+opts.jwtFromRequest = ExtractJwt.fromAuthHeaderWithScheme('bearer');
 opts.secretOrKey = 'secret'; //normally store this in process.env.secret
 
 module.exports = new JwtStrategy(opts, (jwt_payload, done) => {
